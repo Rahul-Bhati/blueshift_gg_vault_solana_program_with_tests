@@ -10,45 +10,65 @@ declare_id!("22222222222222222222222222222222222222222222");
 pub mod blueshift_anchor_vault {
     use super::*;
 
-    pub fn deposit(ctx: Context<VaultAction>, amount: u64) -> Result<()> {
-        require_eq!(ctx.accounts.vault.lamports(), 0, VaultError::VaultAlreadyExists);
-        require_gt!(amount, Rent::get()?.minimum_balance(0), VaultError::InvalidAmount);
-   
-   
-        transfer(
-            CpiContext::new(ctx.accounts.system_program.to_account_info(), 
-                Transfer {
-                    from: ctx.accounts.signer.to_account_info(),
-                    to: ctx.accounts.vault.to_account_info(),
-                }
-            ),
+    pub fn deposit(ctx: Context<Vault_Action>, amount: u64) -> Result<()> {
+        // check if valut is already use
+        require_eq!(
+            ctx.accounts.vault.lamports(),
+            0,
+            VaultError::VaultAlreadyExists
+        );
+
+        // check for the minimum rent needed is bigger than the amount user want to store
+        require_gt!(
             amount,
-        )?;
-   
+            Rent::get()?.minimum_balance(0),
+            VaultError::InvalidAmmount
+        );
+
+        // CPI call for transfer token from signer to vault
+        let programs = ctx.accounts.system_program.to_account_info();
+
+        let cpi_context = CpiContext::new(
+            programs,
+            Transfer {
+                from: ctx.accounts.signer.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+            },
+        );
+
+        transfer(cpi_context, amount)?;
+
         Ok(())
     }
 
-    pub fn withdraw(ctx: Context<VaultAction>) -> Result<()> {
-        let bindings = ctx.accounts.signer.key();
-        let signer_seeds = &[b"vault", bindings.as_ref(), &[ctx.bumps.vault]];
-   
-        transfer(
-            CpiContext::new_with_signer(ctx.accounts.system_program.to_account_info(), 
-                Transfer {
-                    from: ctx.accounts.vault.to_account_info(),
-                    to: ctx.accounts.signer.to_account_info(),
-                },
-                &[&signer_seeds[..]]
-            ),
-            ctx.accounts.vault.lamports(),
-        )?;
-   
+    pub fn withdraw(ctx: Context<Vault_Action>) -> Result<()> {
+        // for withdraw we need to transfer from vault to signer (user)
+        // so vault have to sign that trasaction it is job of pda's
+        // to sign trasaction we use signer seeds that are &[&[&[]]]
+
+        let programs = ctx.accounts.system_program.to_account_info();
+
+        let accounts = Transfer {
+            from: ctx.accounts.vault.to_account_info(),
+            to: ctx.accounts.signer.to_account_info(),
+        };
+
+        let binding = ctx.accounts.signer.key();
+
+        let seeds = &[b"vault", binding.as_ref(), &[ctx.bumps.vault]];
+
+        let signer_seeds = &[&seeds[..]];
+
+        let cpi_context = CpiContext::new_with_signer(programs, accounts, signer_seeds);
+
+        transfer(cpi_context, ctx.accounts.vault.lamports())?;
+
         Ok(())
     }
 }
 
 #[derive(Accounts)]
-pub struct VaultAction<'info> {
+pub struct Vault_Action<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
 
@@ -64,8 +84,9 @@ pub struct VaultAction<'info> {
 
 #[error_code]
 pub enum VaultError {
-    #[msg("Vault already exists")]
+    #[msg("Vault already exists!")]
     VaultAlreadyExists,
-    #[msg("Invalid amount")]
-    InvalidAmount,
+
+    #[msg("Invalid Amount!")]
+    InvalidAmmount,
 }
